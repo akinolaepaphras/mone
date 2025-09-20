@@ -1,110 +1,356 @@
 import os
-import google.generativeai as genai
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from dotenv import load_dotenv
 import json
+import base64 # Needed for decoding email body
+from fastapi import FastAPI, Depends, Request, HTTPException
+from fastapi.responses import RedirectResponse
+from dotenv import load_dotenv
+import time
+from bs4 import BeautifulSoup
+
+# --- Google & AI Imports ---
+import google.generativeai as genai
+from google_auth_oauthlib.flow import Flow
+from google.oauth2.credentials import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+from google.api_core import exceptions
+
+# --- Custom Imports ---
+from auth import verify_token
+# Import our REAL database functions
+from database import (
+    save_google_credentials_to_db,
+    get_google_credentials_from_db,
+    save_transactions_to_db,
+    get_transactions_for_user,
+    get_spending_summary
+)
 
 # --- INITIAL SETUP ---
-
-# Load environment variables from .env file
 load_dotenv()
-
-# Create the FastAPI app instance
 app = FastAPI()
-
-# Configure the Google Generative AI client with the API key
-try:
-    genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
-except KeyError:
-    # This will be helpful for debugging if you forget the .env file
-    raise RuntimeError("GOOGLE_API_KEY not found in .env file. Please create one.")
-
-# Initialize the Gemini model
-# We use gemini-1.5-flash as it's fast and cost-effective for this kind of task
+genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-# This is a Pydantic model. FastAPI uses it to validate the request data.
-# It means we expect the incoming POST request to have a key "email_text" which is a string.
-class EmailParseRequest(BaseModel):
-    email_text: str
+# --- OAuth2 Configuration ---
+client_config = {
+    "web": {
+        "client_id": os.environ.get("GOOGLE_CLIENT_ID"),
+        "client_secret": os.environ.get("GOOGLE_CLIENT_SECRET"),
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "redirect_uris": [os.environ.get("REDIRECT_URI")],
+    }
+}
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'openid'
+]
 
-# A hardcoded example for quick testing
-HARDCODED_EMAIL_EXAMPLE = """
-From: Spotify <no-reply@spotify.com>
-To: Alex Doe <alex.doe@example.com>
-Subject: Your receipt from Spotify
-
-Hi Alex,
-
-Thanks for your payment. This email is your receipt for your Spotify Premium subscription.
-
-Amount: $10.99
-Billing Date: September 19, 2025
-Payment Method: Visa ending in 1234
-
-Your subscription will automatically renew next month. Happy listening!
-
-The Spotify Team
-"""
-
-
-# --- API ENDPOINTS ---
-
-@app.get("/")
-def read_root():
+# --- GEMINI PARSING LOGIC ---
+def parse_email_content(email_content: str) -> dict | None:
     """
-    Root endpoint to check if the API is running.
+    Takes email text, sends it to Gemini, and returns structured JSON.
+    Includes a retry mechanism to handle API rate limiting.
     """
-    return {"status": "API is running!"}
-
-
-@app.post("/prototype/parse-email")
-async def parse_email_with_gemini(request: EmailParseRequest = None):
-    """
-    This endpoint takes email text, sends it to Gemini for parsing,
-    and returns a structured JSON object with financial details.
-    If no text is provided, it uses a hardcoded example.
-    """
-    email_content = request.email_text if request else HARDCODED_EMAIL_EXAMPLE
-
-    # This is the prompt we send to the Gemini API.
-    # It's engineered to ask the model to act as an expert and return a specific JSON format.
     prompt = f"""
     You are an expert financial data extraction agent.
     Analyze the following email content and extract these specific details:
-    - vendorName: The name of the company or service.
-    - transactionDate: The date of the charge or billing.
-    - totalAmount: The total amount paid, as a number.
-    - currency: The currency code (e.g., USD, EUR).
-    - isRecurring: A boolean (true/false) indicating if this is a recurring subscription.
-    - billingCycle: If recurring, the cycle (e.g., "monthly", "annually"). If not, null.
-    - category: A suggested category for this expense (e.g., "Entertainment", "Utilities", "Shopping").
-
-    Return ONLY a valid JSON object with the extracted data. Do not include any explanatory text before or after the JSON.
+    - vendorName, transactionDate, totalAmount (as a number), currency, isRecurring (boolean),
+      billingCycle (e.g., "monthly" or null), and category.
+    Return ONLY a valid JSON object. If this email is not a financial receipt or invoice, return the word null.
 
     Email Content:
     ---
     {email_content}
     ---
     """
+    
+    # Retry logic configuration
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            response = model.generate_content(prompt)
+            cleaned_text = response.text.strip().replace('```json', '').replace('```', '').strip()
+            
+            if cleaned_text.lower() == 'null':
+                return None
+                
+            return json.loads(cleaned_text)
+
+        except exceptions.ResourceExhausted as e:
+            # This specifically catches the 429 rate limit error
+            retry_count += 1
+            wait_time = 10 * retry_count # Exponential backoff (10s, 20s, 30s)
+            print(f"⚠️ Rate limit hit. Retrying in {wait_time} seconds... ({retry_count}/{max_retries})")
+            time.sleep(wait_time)
+            
+        except (json.JSONDecodeError, Exception) as e:
+            print(f"Error parsing email with Gemini: {e}")
+            # For any other error, we don't retry, just fail.
+            return None
+
+    # If all retries fail
+    print("❌ All retries failed. Skipping this email.")
+    return None
+
+def convert_html_to_text(html_content: str) -> str:
+    """
+    Uses BeautifulSoup to parse HTML content and extract the clean, readable text.
+    """
+    soup = BeautifulSoup(html_content, 'lxml')
+    # Use .get_text() to extract all the text from the HTML tags
+    text = soup.get_text(separator=' ', strip=True)
+    return text
+
+# Add this new helper function to your main.py
+# Replace your old get_email_body function with this one
+def get_email_body(msg: dict) -> str | None:
+    """
+    A much more robust function to extract the text body from a Gmail message object.
+    It will prioritize the 'text/plain' part, but if it's not available,
+    it will fall back to the 'text/html' part and clean it.
+    """
+    plain_text = None
+    html_text = None
+
+    if 'parts' in msg['payload']:
+        # This is a multipart message, iterate through the parts
+        for part in msg['payload']['parts']:
+            if part['mimeType'] == 'text/plain':
+                data = part['body'].get('data')
+                if data:
+                    plain_text = base64.urlsafe_b64decode(data).decode('utf-8')
+                    # Prioritize plain text as it's cleaner
+                    break 
+            elif part['mimeType'] == 'text/html':
+                data = part['body'].get('data')
+                if data:
+                    html_text = base64.urlsafe_b64decode(data).decode('utf-8')
+    elif 'body' in msg['payload']:
+        # This is a simple message, check its mimetype
+        if msg['payload'].get('mimeType') == 'text/plain':
+             data = msg['payload']['body'].get('data')
+             if data:
+                 plain_text = base64.urlsafe_b64decode(data).decode('utf-8')
+        elif msg['payload'].get('mimeType') == 'text/html':
+             data = msg['payload']['body'].get('data')
+             if data:
+                 html_text = base64.urlsafe_b64decode(data).decode('utf-8')
+
+    # --- DECISION LOGIC ---
+    if plain_text:
+        # If we found plain text, it's the best source.
+        return plain_text
+    elif html_text:
+        # If we only found HTML, clean it and return the text.
+        print("--- Found HTML content, converting to plain text... ---")
+        return convert_html_to_text(html_text)
+    
+    # If no usable body is found
+    return None
+
+# --- API ENDPOINTS ---
+
+@app.get("/")
+def read_root():
+    return {"status": "API is running!"}
+
+# --- OAUTH2 & AUTH ENDPOINTS ---
+@app.get("/auth/google/login")
+def auth_google_login(payload: dict = Depends(verify_token)):
+    user_id = payload.get("sub")
+    flow = Flow.from_client_config(client_config=client_config, scopes=SCOPES, redirect_uri=os.environ.get("REDIRECT_URI"))
+    authorization_url, state = flow.authorization_url(access_type='offline', prompt='consent', state=user_id)
+    return {"authorization_url": authorization_url}
+
+@app.get("/auth/google/callback")
+async def auth_google_callback(request: Request):
+    user_id = request.query_params.get('state')
+    code = request.query_params.get('code')
+    if not user_id: return {"error": "Invalid state. User ID was not found."}
+
+    flow = Flow.from_client_config(client_config=client_config, scopes=SCOPES, redirect_uri=os.environ.get("REDIRECT_URI"))
+    flow.fetch_token(code=code)
+    credentials = flow.credentials
+    credentials_info = {'token': credentials.token, 'refresh_token': credentials.refresh_token, 'token_uri': credentials.token_uri, 'client_id': credentials.client_id, 'client_secret': credentials.client_secret, 'scopes': credentials.scopes}
+    
+    # Use the REAL database function
+    save_google_credentials_to_db(user_id, credentials_info)
+    
+    return RedirectResponse(url="/?message=Gmail-Account-Linked-Successfully")
+
+@app.get("/user/profile")
+def read_user_profile(payload: dict = Depends(verify_token)):
+    user_id = payload.get("sub")
+    return {"message": "This is a protected endpoint.", "user_id": user_id}
+
+# --- DATA RETRIEVAL & INSIGHTS ENDPOINTS (NEW SECTION) ---
+@app.get("/transactions")
+def get_user_transactions(payload: dict = Depends(verify_token)):
+    """
+    Protected endpoint to fetch all transactions for the logged-in user.
+    """
+    user_id = payload.get("sub")
+    transactions = get_transactions_for_user(user_id)
+    return {"transactions": transactions}
+
+@app.get("/summary")
+def get_user_summary(payload: dict = Depends(verify_token)):
+    """
+    Protected endpoint to fetch a spending summary for the logged-in user.
+    """
+    user_id = payload.get("sub")
+    summary = get_spending_summary(user_id)
+    return summary
+
+@app.post("/insights")
+def get_ai_insights(payload: dict = Depends(verify_token)):
+    """
+    THE "WOW" ENDPOINT.
+    Fetches the user's transactions, formats them, and asks Gemini
+    for personalized, actionable financial advice.
+    """
+    user_id = payload.get("sub")
+    transactions = get_transactions_for_user(user_id)
+
+    if len(transactions) < 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Not enough transaction data to generate insights. Please sync your emails first."
+        )
+
+    # We use pandas to quickly format the data into a clean summary for the AI
+    df = pd.DataFrame(transactions)
+    # Convert transactionDate to just the date part for cleaner prompting
+    try:
+        df['transactionDate'] = pd.to_datetime(df['transactionDate']).dt.date.astype(str)
+    except Exception:
+        # If date conversion fails for any reason, just ignore it
+        pass
+    
+    # Create a string representation of the most recent transactions for the prompt
+    recent_transactions_string = df.head(20).to_string(index=False, columns=['vendorName', 'totalAmount', 'category', 'transactionDate'])
+    
+    summary = get_spending_summary(user_id)
+    summary_string = json.dumps(summary, indent=2)
+
+    prompt = f"""
+    You are a friendly and encouraging financial assistant.
+    A user has the following spending summary:
+    ---
+    {summary_string}
+    ---
+
+    And here are some of their most recent transactions:
+    ---
+    {recent_transactions_string}
+    ---
+
+    Based ONLY on this data, provide two short, actionable, and encouraging insights for this user.
+    Frame the response as if you are talking directly to them.
+    Do not give generic advice. The advice must be directly related to the provided data.
+    For example, if you see multiple subscriptions in the 'Entertainment' category, you could suggest reviewing them.
+    If you see a lot of spending in 'Dining Out', you could suggest a budget for that category.
+
+    Format your response as a JSON object with a single key "insights", which is a list of strings.
+    Example:
+    {{
+      "insights": [
+        "I noticed that 'Entertainment' is your highest spending category this month. It might be a great time to review your subscriptions and see if you're using all of them!",
+        "You're doing a great job tracking your spending! Keep it up."
+      ]
+    }}
+    """
+    try:
+        response = model.generate_content(prompt)
+        # We can reuse the cleaning logic from the email parser
+        cleaned_json_string = response.text.strip().replace('```json', '').replace('```', '').strip()
+        insights_data = json.loads(cleaned_json_string)
+        return insights_data
+
+    except Exception as e:
+        print(f"Error getting insights from Gemini: {e}")
+        raise HTTPException(status_code=500, detail="Could not generate AI insights at this time.")
+
+# --- CORE FUNCTIONALITY ENDPOINT ---
+
+
+@app.post("/email/sync")
+def sync_emails(payload: dict = Depends(verify_token)):
+    """
+    FULLY OPERATIONAL ENDPOINT.
+    Connects to Gmail using stored credentials, fetches emails, parses them with AI,
+    and saves the structured data to MongoDB.
+    """
+    user_id = payload.get("sub")
+    print(f"Starting email sync for user: {user_id}")
+
+    # 1. Get user's Google credentials from the REAL database
+    creds_info = get_google_credentials_from_db(user_id)
+    if not creds_info or "token" not in creds_info:
+        raise HTTPException(status_code=400, detail="User has not linked their Google account. Please link it first.")
+    
+    creds = Credentials.from_authorized_user_info(creds_info)
 
     try:
-        # Send the prompt to the model
-        response = model.generate_content(prompt)
-        
-        # The response text might have markdown formatting for JSON, so we clean it up.
-        cleaned_json_string = response.text.strip().replace('```json', '').replace('```', '').strip()
-        
-        # Convert the cleaned string into a Python dictionary
-        parsed_data = json.loads(cleaned_json_string)
-        
-        return parsed_data
+        # 2. Build the Gmail service client
+        service = build('gmail', 'v1', credentials=creds)
 
-    except json.JSONDecodeError:
-        # This handles cases where Gemini doesn't return perfect JSON
-        raise HTTPException(status_code=500, detail="Failed to parse JSON response from AI model.")
+        # 3. Search for emails with relevant keywords (last 30 days)
+        query = """
+(receipt OR invoice OR "billing statement" OR "account statement" OR "monthly statement"
+ OR "payment received" OR "payment scheduled" OR "payment confirmation" OR "transaction alert"
+ OR "credit card statement" OR "debit card" OR "bank statement" OR "wire transfer"
+ OR "direct deposit" OR "ACH transfer" OR "funds received" OR "refund issued" OR "rebate"
+ OR "order confirmation" OR "your order" OR "purchase confirmation" OR "purchase receipt"
+ OR "shipping confirmation" OR "delivery confirmation" OR "tracking number"
+ OR "subscription renewal" OR "subscription receipt" OR "billing notice" OR "charge notice"
+ OR "account debit" OR "account credit" OR "payment processed" OR "transaction receipt")
+ newer_than:30d
+ -has:calendar
+ -newsletter -unsubscribe -promotional -promotion -marketing -survey -event -webinar
+ -invitation -rsvp -social -noreply -auto -AMA
+""".strip()
+        results = service.users().messages().list(userId='me', q=query).execute()
+        messages = results.get('messages', [])
+        
+        parsed_transactions = []
+        if not messages:
+            return {"message": "No new financial emails found in the last 30 days."}
+
+        print(f"Found {len(messages)} relevant emails. Processing up to 10.")
+        # 4. Loop through messages, get content, and parse
+        for message in messages[:10]: # Limit to 10 for hackathon speed
+            msg = service.users().messages().get(userId='me', id=message['id'], format='full').execute()
+            
+            # Find the email body and decode it
+            # Use our new robust function to get the email body
+            email_body_text = get_email_body(msg)
+            
+            if email_body_text:
+                # For debugging, let's print the first few hundred characters of the email we're parsing
+                print("--- PARSING EMAIL BODY (first 300 chars) ---")
+                print(email_body_text[:300])
+                print("---------------------------------------------")
+
+                parsed_data = parse_email_content(email_body_text)
+                if parsed_data:
+                    print(f"✅ SUCCESS: Parsed transaction: {parsed_data.get('vendorName')}")
+                    parsed_transactions.append(parsed_data)
+                else:
+                    print("❌ FAILED: Gemini returned null for the above email body.")
+                
+                # 5. Save the results to the REAL database
+                save_result = save_transactions_to_db(user_id, parsed_transactions)
+        return {"status": "Sync complete", "found_emails": len(messages), "parsed_transactions": len(parsed_transactions), "db_result": save_result}
+
+    except HttpError as error:
+        print(f"An error occurred with the Gmail API: {error}")
+        raise HTTPException(status_code=500, detail="Failed to connect to Gmail API. The user may need to re-authenticate.")
     except Exception as e:
-        # This handles other potential errors from the API call
-        print(f"An error occurred: {e}")
-        raise HTTPException(status_code=500, detail="An error occurred while communicating with the AI model.")
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
