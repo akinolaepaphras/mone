@@ -16,8 +16,8 @@ export function WelcomeForm() {
     if (firstName.trim()) {
       // Store the name in localStorage
       localStorage.setItem('userFirstName', firstName.trim());
-      // Navigate to the onboarding page
-      router.push('/onboarding');
+      // Navigate to the next step in onboarding flow
+      router.push('/income');
     }
   };
 
@@ -42,7 +42,7 @@ export function WelcomeForm() {
         animate={{ opacity: 1 }}
         transition={{ delay: 0.4 }}
       >
-        <p className="text-lg text-foreground/70 font-normal">
+        <p className="text-lg text-white/70 font-normal">
           What should we call you?
         </p>
       </motion.div>
@@ -57,9 +57,9 @@ export function WelcomeForm() {
         >
           <motion.label
             htmlFor="firstName"
-            className="block text-base font-medium text-foreground"
+            className="block text-base font-medium text-white"
             animate={{ 
-              color: isFocused ? 'rgb(var(--foreground))' : 'rgb(var(--foreground) / 0.8)' 
+              color: isFocused ? 'white' : 'rgb(255 255 255 / 0.8)' 
             }}
           >
             Name
@@ -73,16 +73,16 @@ export function WelcomeForm() {
               onFocus={() => setIsFocused(true)}
               onBlur={() => setIsFocused(false)}
               placeholder="Your first name"
-              className="w-full px-4 py-3 text-base border border-foreground/30
-                       bg-background text-foreground
-                       focus:border-foreground focus:outline-none focus:ring-0
+              className="w-full px-4 py-3 text-base border border-white/30
+                       bg-white/10 text-white backdrop-blur-xl
+                       focus:border-white/50 focus:bg-white/15 focus:outline-none focus:ring-0
                        rounded-md
-                       placeholder:text-foreground/50
+                       placeholder:text-white/50
                        transition-all duration-200"
               whileFocus={{ 
                 scale: 1.02,
-                borderColor: 'rgb(var(--foreground))',
-                boxShadow: '0 0 0 3px rgb(var(--foreground) / 0.1)'
+                borderColor: 'rgb(255 255 255 / 0.5)',
+                boxShadow: '0 0 0 3px rgb(255 255 255 / 0.1)'
               }}
               required
             />
@@ -104,15 +104,15 @@ export function WelcomeForm() {
           onClick={handleContinue}
           disabled={!firstName.trim()}
           className="w-full py-3 px-6 text-base font-medium
-                   bg-foreground/10 text-foreground border border-foreground/20
-                   hover:bg-foreground/20
+                   bg-white text-black
+                   hover:bg-gray-100
                    disabled:opacity-50 disabled:cursor-not-allowed
                    rounded-md
                    focus:outline-none focus:ring-0
                    transition-all duration-200"
           whileHover={{ 
             scale: firstName.trim() ? 1.02 : 1,
-            backgroundColor: firstName.trim() ? 'rgb(var(--foreground) / 0.15)' : undefined
+            backgroundColor: firstName.trim() ? 'rgb(243 244 246)' : undefined
           }}
           whileTap={{ scale: 0.98 }}
           initial={{ opacity: 0, y: 10 }}

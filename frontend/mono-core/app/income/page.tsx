@@ -3,37 +3,30 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
+<<<<<<< Updated upstream
 import { MonoLogo } from "@/components/mono-logo";
 import { ProgressBar } from "@/components/progress-bar";
 import { AnimatedVisual } from "@/components/animated-visual";
-import { useMonoAuth } from "@/lib/auth0-utils";
+=======
 
+>>>>>>> Stashed changes
 export default function IncomePage() {
   const [income, setIncome] = useState<string>('');
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useMonoAuth();
 
   useEffect(() => {
-    // Check if user is authenticated
-    if (!isLoading && !isAuthenticated) {
+<<<<<<< Updated upstream
+    // Check if user is authenticated via localStorage (replacing Auth0)
+=======
+    // Check if user is authenticated via localStorage
+>>>>>>> Stashed changes
+    const token = localStorage.getItem('google_access_token');
+    
+    if (!token) {
       router.push('/auth/signin');
       return;
     }
-  }, [isAuthenticated, isLoading, router]);
-
-  // Show loading while Auth0 is checking authentication status
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="animate-pulse text-foreground">Loading...</div>
-      </div>
-    );
-  }
-
-  // Don't render the page if not authenticated
-  if (!isAuthenticated) {
-    return null;
-  }
+  }, [router]);
 
   const handleContinue = () => {
     if (income.trim()) {
@@ -44,7 +37,7 @@ export default function IncomePage() {
 
   return (
     <motion.div 
-      className="min-h-screen bg-background flex"
+      className="min-h-screen bg-black flex"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -52,12 +45,28 @@ export default function IncomePage() {
     >
       {/* Left side - Visual/Illustration area */}
       <motion.div 
-        className="w-1/2 bg-foreground relative overflow-hidden"
+        className="w-1/2 bg-white relative overflow-hidden"
         initial={{ x: -50, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
         transition={{ duration: 0.8, delay: 0.2 }}
       >
-        <AnimatedVisual variant="income" />
+        {/* Simple animated visual for now */}
+        <div className="h-full flex items-center justify-center">
+          <motion.div 
+            className="text-8xl text-black/10"
+            animate={{ 
+              rotate: [0, 360],
+              scale: [1, 1.1, 1]
+            }}
+            transition={{ 
+              duration: 20,
+              repeat: Infinity,
+              ease: "linear"
+            }}
+          >
+            ●
+          </motion.div>
+        </div>
       </motion.div>
 
       {/* Right side - Content area */}
@@ -69,7 +78,14 @@ export default function IncomePage() {
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.4 }}
         >
-          <MonoLogo size="md" variant="simple" />
+          <h1 className="text-2xl font-bold text-white">
+            <span 
+              className="bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent"
+              style={{ fontFamily: '"Inter", "SF Pro Display", system-ui, -apple-system, sans-serif' }}
+            >
+              mono
+            </span>
+          </h1>
         </motion.div>
 
         {/* Centered progress bar - aligned with logo */}
@@ -79,7 +95,14 @@ export default function IncomePage() {
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.4 }}
         >
-          <ProgressBar currentStep={2} totalSteps={5} />
+          {/* Simple progress indicator */}
+          <div className="flex space-x-2">
+            <div className="w-2 h-2 bg-white rounded-full"></div>
+            <div className="w-2 h-2 bg-white rounded-full"></div>
+            <div className="w-2 h-2 bg-white/30 rounded-full"></div>
+            <div className="w-2 h-2 bg-white/30 rounded-full"></div>
+            <div className="w-2 h-2 bg-white/30 rounded-full"></div>
+          </div>
         </motion.div>
 
         {/* Main content area - centered */}
@@ -92,7 +115,7 @@ export default function IncomePage() {
               animate={{ y: 0, opacity: 1 }}
               transition={{ duration: 0.8, delay: 0.6 }}
             >
-              <h1 className="text-4xl font-light text-foreground leading-tight">
+              <h1 className="text-4xl font-light text-white leading-tight">
                 How much do you earn monthly{" "}
                 <span className="font-semibold">after tax</span>?
               </h1>
@@ -108,23 +131,23 @@ export default function IncomePage() {
               <div className="space-y-2">
                 <label 
                   htmlFor="income" 
-                  className="block text-base font-medium text-foreground"
+                  className="block text-base font-medium text-white"
                 >
                   Monthly income (after tax)
                 </label>
                 <div className="relative">
-                  <span className="absolute left-4 top-1/2 transform -translate-y-1/2 text-foreground/50 text-lg">$</span>
+                  <span className="absolute left-4 top-1/2 transform -translate-y-1/2 text-white/50 text-lg">$</span>
                   <input
                     id="income"
                     type="number"
                     value={income}
                     onChange={(e) => setIncome(e.target.value)}
                     placeholder="0"
-                    className="w-full pl-8 pr-4 py-3 text-base border border-foreground/30
-                             bg-background text-foreground
-                             focus:border-foreground focus:outline-none focus:ring-0
+                    className="w-full pl-8 pr-4 py-3 text-base border border-white/30
+                             bg-white/10 text-white backdrop-blur-xl
+                             focus:border-white/50 focus:bg-white/15 focus:outline-none focus:ring-0
                              rounded-md
-                             placeholder:text-foreground/50"
+                             placeholder:text-white/50"
                     required
                   />
                 </div>
@@ -134,8 +157,8 @@ export default function IncomePage() {
                 onClick={handleContinue}
                 disabled={!income.trim()}
                 className="w-full py-3 px-6 text-base font-medium
-                         bg-foreground/10 text-foreground border border-foreground/20
-                         hover:bg-foreground/20
+                         bg-white text-black
+                         hover:bg-gray-100
                          disabled:opacity-50 disabled:cursor-not-allowed
                          rounded-md
                          focus:outline-none focus:ring-0

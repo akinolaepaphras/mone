@@ -3,41 +3,33 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { MonoLogo } from "@/components/mono-logo";
 import { WelcomeForm } from "@/components/welcome-form";
+<<<<<<< Updated upstream
 import { ProgressBar } from "@/components/progress-bar";
 import { AnimatedVisual } from "@/components/animated-visual";
-import { useMonoAuth } from "@/lib/auth0-utils";
+=======
+>>>>>>> Stashed changes
 
 export default function WelcomePage() {
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useMonoAuth();
 
   useEffect(() => {
-    // Check if user is authenticated
-    if (!isLoading && !isAuthenticated) {
+<<<<<<< Updated upstream
+    // Check if user is authenticated via localStorage (replacing Auth0)
+=======
+    // Check if user is authenticated via localStorage
+>>>>>>> Stashed changes
+    const token = localStorage.getItem('google_access_token');
+    
+    if (!token) {
       router.push('/auth/signin');
       return;
     }
-  }, [isAuthenticated, isLoading, router]);
-
-  // Show loading while Auth0 is checking authentication status
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="animate-pulse text-foreground">Loading...</div>
-      </div>
-    );
-  }
-
-  // Don't render the page if not authenticated
-  if (!isAuthenticated) {
-    return null;
-  }
+  }, [router]);
 
   return (
     <motion.div 
-      className="min-h-screen bg-background flex"
+      className="min-h-screen bg-black flex"
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
@@ -45,12 +37,28 @@ export default function WelcomePage() {
     >
       {/* Left side - Visual/Illustration area (like YNAB's green section) */}
       <motion.div 
-        className="w-1/2 bg-foreground relative overflow-hidden"
+        className="w-1/2 bg-white relative overflow-hidden"
         initial={{ x: -50, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
         transition={{ duration: 0.8, delay: 0.2 }}
       >
-        <AnimatedVisual variant="welcome" />
+        {/* Simple animated visual for now */}
+        <div className="h-full flex items-center justify-center">
+          <motion.div 
+            className="text-8xl text-black/10"
+            animate={{ 
+              rotate: [0, 360],
+              scale: [1, 1.1, 1]
+            }}
+            transition={{ 
+              duration: 20,
+              repeat: Infinity,
+              ease: "linear"
+            }}
+          >
+            ●
+          </motion.div>
+        </div>
       </motion.div>
 
       {/* Right side - Content area */}
@@ -62,17 +70,14 @@ export default function WelcomePage() {
           animate={{ y: 0, opacity: 1 }}
           transition={{ duration: 0.6, delay: 0.4 }}
         >
-          <MonoLogo size="md" variant="simple" />
-        </motion.div>
-
-        {/* Centered progress bar - aligned with logo */}
-        <motion.div 
-          className="absolute top-8 left-1/2 transform -translate-x-1/2 flex items-center h-10"
-          initial={{ y: -20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.6, delay: 0.4 }}
-        >
-          <ProgressBar currentStep={0} totalSteps={5} />
+          <h1 className="text-2xl font-bold text-white">
+            <span 
+              className="bg-gradient-to-r from-white to-gray-300 bg-clip-text text-transparent"
+              style={{ fontFamily: '"Inter", "SF Pro Display", system-ui, -apple-system, sans-serif' }}
+            >
+              mono
+            </span>
+          </h1>
         </motion.div>
 
         {/* Main content area - centered */}
@@ -85,7 +90,7 @@ export default function WelcomePage() {
               animate={{ y: 0, opacity: 1 }}
               transition={{ duration: 0.8, delay: 0.6 }}
             >
-              <h1 className="text-4xl font-light text-foreground leading-tight">
+              <h1 className="text-4xl font-light text-white leading-tight">
                 First things first, people call us{" "}
                 <span className="font-semibold">"mono"</span>.
               </h1>
